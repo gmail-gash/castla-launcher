@@ -10,13 +10,19 @@
  * Signaling wire format matches the phone (SignalChunker.kt): each ntfy message is
  * {from, id, i, n, d}, where d is a slice of the payload's JSON text.
  */
+// WebSocket relay from aws/signaling.yaml. scripts/build-launcher-site.sh fills this in from
+// SignalingConfig.SOCKET_URL; left empty, signaling falls back to ntfy.sh.
+const RTC_SIGNAL_URL = 'wss://eelqunk48d.execute-api.ap-northeast-2.amazonaws.com/prod';
+const RTC_SIGNAL_KEEPALIVE_MS = 4 * 60 * 1000;  // the relay drops a socket after 10 idle minutes
 const RTC_NTFY = 'https://ntfy.sh';
 const RTC_TOPIC_PREFIX = 'castla-rtc-';
 const RTC_CHUNK = 3000;                        // ntfy turns bodies over 4096 bytes into attachments
 const RTC_ROOM_PATTERN = /^[abcdefghjkmnpqrstuvwxyz23456789]{12}$/;
-const RTC_HELLO_FAST_MS = 5000;                // first minute: the phone may be seconds away
-const RTC_HELLO_SLOW_MS = 15000;               // then back off to stay inside ntfy's rate limit
-const RTC_HELLO_FAST_COUNT = 12;
+// ntfy.sh allows about 250 messages a day per address, and one connection costs ~5 of them
+// (hello + offer and answer in two parts each). Waiting hellos are what burns the quota.
+const RTC_HELLO_FAST_MS = 5000;                // first 30 s: the phone may be seconds away
+const RTC_HELLO_SLOW_MS = 30000;               // then once every 30 s
+const RTC_HELLO_FAST_COUNT = 6;
 const RTC_NEGOTIATION_MS = 10000;              // matches HelloPolicy.NEGOTIATION_WINDOW_MS on the phone
 const RTC_REQUEST_TIMEOUT_MS = 15000;
 
@@ -91,13 +97,43 @@ class RtcLink {
         this.waiters = [];
         this.icons = new Map();
         this.partial = new Map();
+        this.relay = null;
     }
 
     start() {
+        if (RTC_SIGNAL_URL) {
+            this.openRelay(1000);
+            return;
+        }
         const events = new EventSource(`${RTC_NTFY}/${this.topic}/sse`);
         events.onopen = () => this.scheduleHello(0);
-        events.onmessage = (event) => this.onSignal(event.data);
+        events.onmessage = (event) => {
+            try {
+                const e = JSON.parse(event.data);
+                if (!e.event || e.event === 'message') this.onSignal(e.message);
+            } catch (_) {}
+        };
         events.onerror = () => console.warn('[RTC] Signaling stream interrupted — retrying');
+    }
+
+    /** Join the room on the WebSocket relay; reopen with backoff whenever it drops. */
+    openRelay(backoffMs) {
+        const room = this.topic.slice(RTC_TOPIC_PREFIX.length);
+        const ws = new WebSocket(`${RTC_SIGNAL_URL}?room=${room}`);
+        let keepalive = null;
+        ws.onopen = () => {
+            this.relay = ws;
+            backoffMs = 1000;
+            keepalive = setInterval(() => ws.readyState === WebSocket.OPEN && ws.send('ping'), RTC_SIGNAL_KEEPALIVE_MS);
+            if (!this.connected) this.scheduleHello(0);
+        };
+        ws.onmessage = (event) => this.onSignal(event.data);
+        ws.onclose = () => {
+            clearInterval(keepalive);
+            if (this.relay === ws) this.relay = null;
+            console.warn(`[RTC] Signaling relay closed — retrying in ${backoffMs / 1000}s`);
+            setTimeout(() => this.openRelay(Math.min(backoffMs * 2, 30000)), backoffMs);
+        };
     }
 
     /** Ask the phone for a fresh connection, e.g. after the previous one dropped. */
@@ -113,6 +149,11 @@ class RtcLink {
         clearTimeout(this.helloTimer);
         this.helloTimer = setTimeout(() => {
             if (this.connected) return;
+            if (document.hidden) {
+                // Nobody is looking; ask again as soon as the page is visible.
+                document.addEventListener('visibilitychange', () => this.scheduleHello(0), { once: true });
+                return;
+            }
             this.hellos++;
             this.publish({ type: 'hello' });
             this.scheduleHello(this.hellos < RTC_HELLO_FAST_COUNT ? RTC_HELLO_FAST_MS : RTC_HELLO_SLOW_MS);
@@ -125,18 +166,19 @@ class RtcLink {
         const n = Math.max(1, Math.ceil(body.length / RTC_CHUNK));
         for (let i = 0; i < n; i++) {
             const part = { from: this.self, id, i, n, d: body.slice(i * RTC_CHUNK, (i + 1) * RTC_CHUNK) };
+            if (RTC_SIGNAL_URL) {
+                if (this.relay && this.relay.readyState === WebSocket.OPEN) this.relay.send(JSON.stringify(part));
+                continue;   // a hello lost while the relay reconnects is repeated once it is back
+            }
             fetch(`${RTC_NTFY}/${this.topic}`, { method: 'POST', body: JSON.stringify(part) })
                 .catch((e) => console.warn('[RTC] Publish failed:', e));
         }
     }
 
+    /** One signaling part — the {from, id, i, n, d} envelope, from either transport. */
     onSignal(data) {
         let part;
-        try {
-            const event = JSON.parse(data);
-            if (event.event && event.event !== 'message') return;
-            part = JSON.parse(event.message);
-        } catch (_) { return; }
+        try { part = JSON.parse(data); } catch (_) { return; }
         if (!part || part.from === this.self || typeof part.d !== 'string') return;
 
         const key = `${part.from}:${part.id}`;
