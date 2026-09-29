@@ -59,7 +59,8 @@ class DataChannelSocket {
 class RtcLink {
     /**
      * @param {string} room
-     * @param {{onTrack: function(MediaStream), onChannel: function(DataChannelSocket), onLost: function()}} handlers
+     * @param {{onTrack: function(MediaStream), onChannel: function(DataChannelSocket),
+     *          onAudioChannel: function(DataChannelSocket), onLost: function()}} handlers
      */
     constructor(room, handlers) {
         this.topic = RTC_TOPIC_PREFIX + room;
@@ -152,8 +153,14 @@ class RtcLink {
         this.offerSdp = sdp;
 
         pc.ontrack = (event) => this.handlers.onTrack(event.streams[0] || new MediaStream([event.track]));
-        pc.ondatachannel = (event) =>
-            this.handlers.onChannel(new DataChannelSocket(event.channel, (text) => this.resolveReply(text)));
+        pc.ondatachannel = (event) => {
+            if (event.channel.label === 'audio') {
+                // Same bytes the WebSocket /ws/audio endpoint sends, so AudioPlayer plays it as is.
+                this.handlers.onAudioChannel(new DataChannelSocket(event.channel));
+            } else {
+                this.handlers.onChannel(new DataChannelSocket(event.channel, (text) => this.resolveReply(text)));
+            }
+        };
         pc.onconnectionstatechange = () => {
             if (pc !== this.pc) return;
             console.log('[RTC] Connection:', pc.connectionState);

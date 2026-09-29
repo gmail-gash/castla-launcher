@@ -31,6 +31,7 @@ const apiBase = `http://${host}`;
 // the phone over WebSockets as before.
 const rtcRoom = resolveRoom(window.location);
 let rtcLink = null;
+let rtcAudioSocket = null;   // waits here until a tap unlocks audio
 
 let videoSocket = null;
 let controlSocket = null;
@@ -989,6 +990,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 controlSocket = socket;
                 attachControlHandlers();
             },
+            onAudioChannel: (socket) => {
+                rtcAudioSocket = socket;
+                if (audioPlayer && audioPlayer.audioCtx) audioPlayer.attach(socket);
+            },
             onLost: () => {
                 if (!isLauncherMode) {
                     setStatus('Reconnecting...', '');
@@ -1740,7 +1745,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const dismissSplash = async () => {
         if (!splashReady) return; // ignore taps before loading finishes
-        if (!rtcRoom && (!audioPlayer.socket || audioPlayer.socket.readyState === WebSocket.CLOSED)) {
+        if (rtcRoom) {
+            if (!audioPlayer.audioCtx) await audioPlayer.startFromUserGesture(rtcAudioSocket);
+        } else if (!audioPlayer.socket || audioPlayer.socket.readyState === WebSocket.CLOSED) {
             await audioPlayer.startFromUserGesture(`ws://${host}/ws/audio`);
         }
         document.removeEventListener('click', dismissSplash);

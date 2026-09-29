@@ -28,7 +28,11 @@ class AudioPlayer {
         this.clockOffset = null; // EMA server-to-client clock offset for A/V sync
     }
 
-    async startFromUserGesture(wsUrl) {
+    /**
+     * @param source WebSocket URL, an already-open WebSocket-shaped channel (WebRTC mode), or
+     *               null to only unlock audio now and {@link attach} a channel when it arrives.
+     */
+    async startFromUserGesture(source) {
         try {
             this.audioCtx = new (window.AudioContext || window.webkitAudioContext)({
                 sampleRate: this.sampleRate,
@@ -38,10 +42,7 @@ class AudioPlayer {
                 await this.audioCtx.resume();
             }
             console.log('[Audio] AudioContext ready, state:', this.audioCtx.state);
-            this.nextPlayTime = 0;
-            this.timestampUs = 0;
-            this.mode = null;
-            this._connectSocket(wsUrl);
+            if (source) this.attach(source);
             return true;
         } catch (e) {
             console.error('[Audio] Failed to start:', e);
@@ -130,9 +131,23 @@ class AudioPlayer {
         this.nextPlayTime += audioBuffer.duration;
     }
 
-    _connectSocket(wsUrl) {
-        if (this.socket) { this.socket.onclose = null; this.socket.close(); }
-        this.socket = new WebSocket(wsUrl);
+    /** Start playing from a new stream. Needs the AudioContext from {@link startFromUserGesture}. */
+    attach(source) {
+        if (!this.audioCtx) return false;
+        if (this.decoder && this.decoder.state !== 'closed') {
+            try { this.decoder.close(); } catch (_) {}
+        }
+        this.decoder = null;
+        this.nextPlayTime = 0;
+        this.timestampUs = 0;
+        this.mode = null;
+        this._connectSocket(source);
+        return true;
+    }
+
+    _connectSocket(source) {
+        if (this.socket && this.socket !== source) { this.socket.onclose = null; this.socket.close(); }
+        this.socket = typeof source === 'string' ? new WebSocket(source) : source;
         this.socket.binaryType = 'arraybuffer';
 
         this.socket.onopen = () => console.log('[Audio] WebSocket connected');
