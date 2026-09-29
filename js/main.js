@@ -41,8 +41,10 @@ let secondaryVideoSocket = null;
 let secondaryTouchHandler = null;
 let secondaryDecoder = null;
 
-// Split strategy: 'dual_stream' = two VDs with separate video streams
-const SPLIT_STRATEGY = 'dual_stream';
+// Split strategy: 'dual_stream' = two VDs with separate video streams,
+// 'freeform' = both apps side by side on one VD (one stream). WebRTC carries a single video
+// stream, so it uses 'freeform'.
+const SPLIT_STRATEGY = rtcRoom ? 'freeform' : 'dual_stream';
 
 let decoder = null;
 let framePacer = null;
@@ -362,8 +364,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function isDualStreamCapable(app) {
-        // WebRTC carries one video stream so far; a split would leave the second pane empty.
-        return !!app && !rtcRoom;
+        return !!app;
     }
 
     function destroySecondaryTransport() {
@@ -461,7 +462,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     async function enableBrowserSplit(app) {
-        if (!app || rtcRoom) return;
+        if (!app) return;
 
         if (SPLIT_STRATEGY === 'freeform') {
             // Single-VD freeform split: both apps on the same VD, single stream
@@ -1679,11 +1680,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     homeBtn.addEventListener('click', goHome);
 
     // ── Edge Swipe Handlers for Split Drawer ──
-    if (rtcRoom) {
-        // No split over WebRTC yet: hide the edge handle so it can't be opened by accident.
-        if (splitHandle) splitHandle.style.display = 'none';
-        if (splitDrawer) splitDrawer.style.display = 'none';
-    } else if (splitHandle) {
+    if (splitHandle) {
         splitHandle.addEventListener('click', () => {
             splitDrawer.classList.toggle('open');
         });
