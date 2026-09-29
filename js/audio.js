@@ -89,14 +89,29 @@ class AudioPlayer {
             const frames = audioData.numberOfFrames;
             const sr = audioData.sampleRate;
             const buf = this.audioCtx.createBuffer(ch, frames, sr);
-            for (let c = 0; c < ch; c++) {
-                const cd = new Float32Array(frames);
-                audioData.copyTo(cd, { planeIndex: c });
-                buf.copyToChannel(cd, c);
+            if (audioData.format === 'f32') {
+                // Interleaved (current Chrome): one plane holding every channel.
+                const all = new Float32Array(frames * ch);
+                audioData.copyTo(all, { planeIndex: 0 });
+                for (let c = 0; c < ch; c++) {
+                    const cd = buf.getChannelData(c);
+                    for (let i = 0; i < frames; i++) cd[i] = all[i * ch + c];
+                }
+            } else {
+                // Planar, or another sample type converted to planar float.
+                const format = audioData.format === 'f32-planar' ? undefined : 'f32-planar';
+                for (let c = 0; c < ch; c++) {
+                    const cd = new Float32Array(frames);
+                    audioData.copyTo(cd, format ? { planeIndex: c, format } : { planeIndex: c });
+                    buf.copyToChannel(cd, c);
+                }
             }
             this._scheduleBuffer(buf);
         } catch (e) {
-            // skip
+            if (!this._decodeErrorLogged) {
+                this._decodeErrorLogged = true;
+                console.error('[Audio] Could not play decoded audio:', e, audioData.format);
+            }
         } finally {
             audioData.close();
         }
