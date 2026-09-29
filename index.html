@@ -23,6 +23,14 @@
             show('오류: ' + ((e.reason && e.reason.message) || e.reason));
         });
         document.addEventListener('DOMContentLoaded', function () {
+            // On the public site the address must carry the room code (?r=, 12 characters
+            // from RoomCode.kt's alphabet). Without it the page waits for a phone forever.
+            var q = location.search, r = (q.match(/[?&]r=([^&]*)/) || [])[1];
+            if (!/[?&]h=/.test(q) && location.hostname.indexOf('clop.ai') >= 0 &&
+                    !(r && /^[abcdefghjkmnpqrstuvwxyz23456789]{12}$/.test(r))) {
+                shown = r ? '방 코드가 틀렸어요: "' + decodeURIComponent(r) + '" — 폰 앱의 주소를 그대로 입력하세요'
+                          : '주소에 방 코드(?r=…)가 없어요 — 폰 앱의 주소를 그대로 입력하세요';
+            }
             if (shown) show(shown);
             var box = document.getElementById('splash-loading');
             var m = navigator.userAgent.match(/Chrom(e|ium)\/[0-9.]+/);
