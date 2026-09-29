@@ -194,6 +194,7 @@ class RtcLink {
         let msg;
         try { msg = JSON.parse(parts.join('')); } catch (_) { return; }
         if (msg.type !== 'offer' || this.connected || this.paused) return;
+        if (msg.to && msg.to !== this.self) return;   // another screen's offer
         // Don't say hello again while this offer is being answered; the phone would take it as
         // a request to start over. If negotiation stalls, the next hello asks for a fresh offer.
         this.scheduleHello(RTC_NEGOTIATION_MS);
