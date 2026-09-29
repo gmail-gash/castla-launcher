@@ -17,6 +17,7 @@ const RTC_ROOM_PATTERN = /^[abcdefghjkmnpqrstuvwxyz23456789]{12}$/;
 const RTC_HELLO_FAST_MS = 5000;                // first minute: the phone may be seconds away
 const RTC_HELLO_SLOW_MS = 15000;               // then back off to stay inside ntfy's rate limit
 const RTC_HELLO_FAST_COUNT = 12;
+const RTC_NEGOTIATION_MS = 10000;              // matches HelloPolicy.NEGOTIATION_WINDOW_MS on the phone
 const RTC_REQUEST_TIMEOUT_MS = 15000;
 
 /** Room code from `?r=`, or null when the page runs on the WebSocket transport. */
@@ -65,6 +66,8 @@ class RtcLink {
         this.self = 'car-' + Math.random().toString(36).slice(2, 10);
         this.handlers = handlers;
         this.pc = null;
+        this.offerSdp = null;     // offer the current peer answered, to spot repeats
+        this.answerSdp = null;
         this.connected = false;
         this.hellos = 0;
         this.helloTimer = null;
@@ -128,7 +131,16 @@ class RtcLink {
 
         let msg;
         try { msg = JSON.parse(parts.join('')); } catch (_) { return; }
-        if (msg.type === 'offer') this.answer(msg.sdp);
+        if (msg.type !== 'offer' || this.connected) return;
+        // Don't say hello again while this offer is being answered; the phone would take it as
+        // a request to start over. If negotiation stalls, the next hello asks for a fresh offer.
+        this.scheduleHello(RTC_NEGOTIATION_MS);
+        if (msg.sdp === this.offerSdp) {
+            // The phone repeats its offer when our hello crossed it in flight: answer it the same way.
+            if (this.answerSdp) this.publish({ type: 'answer', sdp: this.answerSdp });
+            return;
+        }
+        this.answer(msg.sdp);
     }
 
     /* ---------- peer ---------- */
@@ -137,6 +149,7 @@ class RtcLink {
         this.closePeer();
         const pc = new RTCPeerConnection({ iceServers: [] });
         this.pc = pc;
+        this.offerSdp = sdp;
 
         pc.ontrack = (event) => this.handlers.onTrack(event.streams[0] || new MediaStream([event.track]));
         pc.ondatachannel = (event) =>
@@ -163,11 +176,14 @@ class RtcLink {
             setTimeout(resolve, 3000);   // host candidates arrive at once; don't wait on a stalled gatherer
         });
         if (pc !== this.pc) return;
-        this.publish({ type: 'answer', sdp: pc.localDescription.sdp });
+        this.answerSdp = pc.localDescription.sdp;
+        this.publish({ type: 'answer', sdp: this.answerSdp });
     }
 
     closePeer() {
         this.connected = false;
+        this.offerSdp = null;
+        this.answerSdp = null;
         if (!this.pc) return;
         const pc = this.pc;
         this.pc = null;
