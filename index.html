@@ -1,6 +1,40 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <script>
+    // Report script errors on the loading screen. Written in ES5 so it runs on any browser,
+    // including one too old for the rest of the page — the car has no console to read.
+    (function () {
+        var shown = null;
+        function show(text) {
+            shown = text;
+            var el = document.querySelector('#splash-loading .splash-loading-text');
+            if (el) el.textContent = text;
+        }
+        window.addEventListener('error', function (e) {
+            var t = e.target;
+            if (t && t !== window && (t.src || t.href)) {
+                show('파일 로드 실패: ' + String(t.src || t.href).split('/').pop());
+            } else {
+                show('오류: ' + (e.message || '?') + ' (' + String(e.filename || '').split('/').pop().split('?')[0] + ':' + (e.lineno || '?') + ')');
+            }
+        }, true);
+        window.addEventListener('unhandledrejection', function (e) {
+            show('오류: ' + ((e.reason && e.reason.message) || e.reason));
+        });
+        document.addEventListener('DOMContentLoaded', function () {
+            if (shown) show(shown);
+            var box = document.getElementById('splash-loading');
+            var m = navigator.userAgent.match(/Chrom(e|ium)\/[0-9.]+/);
+            if (box) {
+                var ua = document.createElement('div');
+                ua.style.cssText = 'margin-top:8px;font-size:11px;opacity:.5';
+                ua.textContent = m ? m[0] : navigator.userAgent.slice(0, 80);
+                box.appendChild(ua);
+            }
+        });
+    })();
+    </script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Castla</title>
