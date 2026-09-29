@@ -25,6 +25,12 @@ const RTC_HELLO_SLOW_MS = 30000;               // then once every 30 s
 const RTC_HELLO_FAST_COUNT = 6;
 const RTC_NEGOTIATION_MS = 10000;              // matches HelloPolicy.NEGOTIATION_WINDOW_MS on the phone
 const RTC_REQUEST_TIMEOUT_MS = 15000;
+// Receive-side buffer. 2.4 GHz Wi-Fi shows ~200 ms latency spikes; with Chrome's default ~80 ms
+// target each one froze the picture. Costs ~70 ms of extra delay. Override with ?jb=<ms>.
+const RTC_JITTER_BUFFER_MS = (() => {
+    const v = parseInt(new URLSearchParams(location.search).get('jb'), 10);
+    return Number.isFinite(v) && v >= 0 && v <= 1000 ? v : 150;
+})();
 
 /** Room code from `?r=`, or null when the page runs on the WebSocket transport. */
 function resolveRoom(loc) {
@@ -214,7 +220,10 @@ class RtcLink {
         this.pc = pc;
         this.offerSdp = sdp;
 
-        pc.ontrack = (event) => this.handlers.onTrack(event.streams[0] || new MediaStream([event.track]));
+        pc.ontrack = (event) => {
+            if ('jitterBufferTarget' in event.receiver) event.receiver.jitterBufferTarget = RTC_JITTER_BUFFER_MS;
+            this.handlers.onTrack(event.streams[0] || new MediaStream([event.track]));
+        };
         pc.ondatachannel = (event) => {
             if (event.channel.label === 'audio') {
                 // Same bytes the WebSocket /ws/audio endpoint sends, so AudioPlayer plays it as is.
