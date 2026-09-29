@@ -363,6 +363,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
+    /** Left share of the split as the toolbar currently shows it. */
+    function selectedSplitRatio() {
+        const active = document.querySelector('.split-ratio-btn.active');
+        return (active && parseFloat(active.dataset.ratio)) || 0.5;
+    }
+
     function isDualStreamCapable(app) {
         return !!app;
     }
@@ -480,6 +486,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             updateSplitToolbarVisibility();
             // Send split app launch request to server
             if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+                // Open at the ratio the toolbar shows, so the buttons and the windows agree.
+                controlSocket.send(JSON.stringify({ type: 'splitRatio', ratio: selectedSplitRatio() }));
                 const message = {
                     type: 'launchApp',
                     pkg: app.packageName,
@@ -1727,6 +1735,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (!ratio || !browserSplitState.active) return;
             document.querySelectorAll('.split-ratio-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
+            if (SPLIT_STRATEGY === 'freeform') {
+                // Both apps share one display: the phone moves the windows. Resizing the page's
+                // pane here would shrink the whole stream to it.
+                browserSplitState.ratio = ratio;
+                if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+                    controlSocket.send(JSON.stringify({ type: 'splitRatio', ratio }));
+                }
+                return;
+            }
             setBrowserSplitRatio(ratio);
             lockBrowserSplitViewports(browserSplitState.app);
             requestAnimationFrame(() => sendViewportSize());
