@@ -27,6 +27,11 @@ function resolveHost(loc) {
 const host = resolveHost(window.location);
 const apiBase = `http://${host}`;
 
+// `?r=<room code>` selects the WebRTC transport (see webrtc.js); without it the page talks to
+// the phone over WebSockets as before.
+const rtcRoom = resolveRoom(window.location);
+let rtcLink = null;
+
 let videoSocket = null;
 let controlSocket = null;
 let audioPlayer = null;
@@ -955,6 +960,35 @@ document.addEventListener('DOMContentLoaded', async () => {
         videoSocket.onerror = (error) => console.error('[Main] Video WebSocket error:', error);
     }
 
+    /** WebRTC transport: video into the <video> element, control over the data channel. */
+    function connectRtc() {
+        const video = document.getElementById('mse-video');
+        canvas.style.display = 'none';
+        video.style.display = 'block';
+        if (!isLauncherMode) setStatus('Connecting...', '');
+        video.addEventListener('playing', () => {
+            firstFrameReceived = true;
+            checkReady();
+        });
+        rtcLink = new RtcLink(rtcRoom, {
+            onTrack: (stream) => {
+                video.srcObject = stream;
+                video.play().catch(() => {});
+            },
+            onChannel: (socket) => {
+                controlSocket = socket;
+                attachControlHandlers();
+            },
+            onLost: () => {
+                if (!isLauncherMode) {
+                    setStatus('Reconnecting...', '');
+                    showOverlay();
+                }
+            },
+        });
+        rtcLink.start();
+    }
+
     function checkReady() {
         if (firstFrameReceived) {
             clearLaunchTimeout();
@@ -1089,12 +1123,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     function connectControl() {
         const wsUrl = `ws://${host}/ws/control`;
         controlSocket = new WebSocket(wsUrl);
+        attachControlHandlers();
+    }
 
+    /** Handlers for `controlSocket` — a WebSocket, or a WebRTC data channel dressed as one. */
+    function attachControlHandlers() {
         controlSocket.onopen = () => {
             closeInputBubble(true);
             if (touchHandler) touchHandler.destroy();
             const renderer = (decoder && decoder.renderer) ? decoder.renderer : null;
-            touchHandler = new TouchHandler(canvas, renderer, controlSocket, 'primary');
+            // WebRTC video plays in the <video> element, which also accounts for letterboxing.
+            touchHandler = rtcRoom
+                ? new TouchHandler(document.getElementById('mse-video'), null, controlSocket, 'primary')
+                : new TouchHandler(canvas, renderer, controlSocket, 'primary');
             if (SPLIT_STRATEGY === 'dual_stream' && browserSplitState.active && secondaryCanvas) {
                 if (secondaryTouchHandler) secondaryTouchHandler.destroy();
                 secondaryTouchHandler = new TouchHandler(secondaryCanvas, getActiveSecondaryRenderer(), controlSocket, 'secondary');
@@ -1226,16 +1267,35 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         controlSocket.onclose = () => {
             clearInterval(qualityReportInterval);
-            scheduleReconnect();
+            // Over WebRTC, RtcLink re-establishes the peer; WebSockets reconnect here.
+            if (!rtcRoom) scheduleReconnect();
         };
     }
 
     // --- Web Launcher & Split Launcher Code ---
+    async function fetchAppsOverHttp() {
+        const response = await fetch(`${apiBase}/api/apps`);
+        if (!response.ok) throw new Error('Network error');
+        return response.json();
+    }
+
+    // The browser blocks this page's HTTP requests to the phone, so over WebRTC the launcher
+    // list and icons come through the control channel instead.
+    function requestAppsOverRtc() {
+        return rtcLink.request(controlSocket, { type: 'getApps' }, (m) => (m.type === 'apps' ? m.data : undefined));
+    }
+
+    function setAppIcon(img, pkg) {
+        if (!rtcRoom) {
+            img.src = `${apiBase}/api/icon?pkg=${encodeURIComponent(pkg)}`;
+            return;
+        }
+        rtcLink.icon(controlSocket, pkg).then((url) => { if (url) img.src = url; });
+    }
+
     async function loadLauncherApps() {
         try {
-            const response = await fetch(`${apiBase}/api/apps`);
-            if (!response.ok) throw new Error('Network error');
-            const data = await response.json();
+            const data = rtcRoom ? await requestAppsOverRtc() : await fetchAppsOverHttp();
 
             const apps = data.apps || [];
 
@@ -1297,7 +1357,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                 const icon = document.createElement('img');
                 icon.className = 'split-app-icon';
-                icon.src = `${apiBase}/api/icon?pkg=${encodeURIComponent(app.packageName)}`;
+                setAppIcon(icon, app.packageName);
                 cell.appendChild(icon);
 
                 const label = document.createElement('div');
@@ -1361,7 +1421,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                 const icon = document.createElement('img');
                 icon.className = 'app-icon';
-                icon.src = `${apiBase}/api/icon?pkg=${encodeURIComponent(app.packageName)}`;
+                setAppIcon(icon, app.packageName);
                 icon.loading = 'lazy';
                 cell.appendChild(icon);
 
@@ -1633,18 +1693,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     try {
-        await initDecoder();
-        if (codecMode === 'mjpeg') {
-            // Open the control socket first so the `codec: mjpeg` preference
-            // reaches the server before the video socket starts streaming.
-            // Otherwise the server ships H.264 until it processes the switch,
-            // which an MJPEG decoder can't render.
-            connectControl();
-            await waitForControlSocketOpen(2000);
-            connectVideo();
+        if (rtcRoom) {
+            connectRtc();
         } else {
-            connectVideo();
-            connectControl();
+            await initDecoder();
+            if (codecMode === 'mjpeg') {
+                // Open the control socket first so the `codec: mjpeg` preference
+                // reaches the server before the video socket starts streaming.
+                // Otherwise the server ships H.264 until it processes the switch,
+                // which an MJPEG decoder can't render.
+                connectControl();
+                await waitForControlSocketOpen(2000);
+                connectVideo();
+            } else {
+                connectVideo();
+                connectControl();
+            }
         }
     } catch (e) {
         setStatus(e.message, 'error');
@@ -1666,7 +1730,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const dismissSplash = async () => {
         if (!splashReady) return; // ignore taps before loading finishes
-        if (!audioPlayer.socket || audioPlayer.socket.readyState === WebSocket.CLOSED) {
+        if (!rtcRoom && (!audioPlayer.socket || audioPlayer.socket.readyState === WebSocket.CLOSED)) {
             await audioPlayer.startFromUserGesture(`ws://${host}/ws/audio`);
         }
         document.removeEventListener('click', dismissSplash);
