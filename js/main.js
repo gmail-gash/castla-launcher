@@ -965,6 +965,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         const video = document.getElementById('mse-video');
         canvas.style.display = 'none';
         video.style.display = 'block';
+        // The stylesheet lets touches fall through the video to the canvas above it; over WebRTC
+        // there is no canvas, so the video itself takes them.
+        video.style.pointerEvents = 'auto';
         if (!isLauncherMode) setStatus('Connecting...', '');
         video.addEventListener('playing', () => {
             firstFrameReceived = true;
