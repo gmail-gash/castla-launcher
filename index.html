@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Castla</title>
-    <link rel="stylesheet" href="css/player.css?v=0a34fa55f5">
+    <link rel="stylesheet" href="css/player.css?v=b596862a6d">
     <style>
         /* Web Native Launcher Styles */
         #web-launcher {
@@ -256,6 +256,14 @@
         }
         #input-bubble.visible {
             display: flex !important;
+        }
+        /* With the on-screen keyboard the bubble is only a focus target for a real keyboard:
+           kept focusable, but off screen. */
+        #input-bubble.proxy {
+            left: -10000px !important;
+            top: 0 !important;
+            opacity: 0;
+            pointer-events: none;
         }
         #input-bubble::after {
             content: '';
@@ -841,15 +849,15 @@
 
     </div>
 
-    <script src="js/decoder.js?v=0a34fa55f5"></script>
-    <script src="js/mse-decoder.js?v=0a34fa55f5"></script>
-    <script src="js/renderer.js?v=0a34fa55f5"></script>
-    <script src="js/frame-pacer.js?v=0a34fa55f5"></script>
-    <script src="js/touch.js?v=0a34fa55f5"></script>
-    <script src="js/audio.js?v=0a34fa55f5"></script>
-    <script src="js/fallback.js?v=0a34fa55f5"></script>
-    <script src="js/webrtc.js?v=0a34fa55f5"></script>
-    <script src="js/keyboard.js?v=0a34fa55f5"></script>
-    <script src="js/main.js?v=0a34fa55f5"></script>
+    <script src="js/decoder.js?v=b596862a6d"></script>
+    <script src="js/mse-decoder.js?v=b596862a6d"></script>
+    <script src="js/renderer.js?v=b596862a6d"></script>
+    <script src="js/frame-pacer.js?v=b596862a6d"></script>
+    <script src="js/touch.js?v=b596862a6d"></script>
+    <script src="js/audio.js?v=b596862a6d"></script>
+    <script src="js/fallback.js?v=b596862a6d"></script>
+    <script src="js/webrtc.js?v=b596862a6d"></script>
+    <script src="js/keyboard.js?v=b596862a6d"></script>
+    <script src="js/main.js?v=b596862a6d"></script>
 </body>
 </html>

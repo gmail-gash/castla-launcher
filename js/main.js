@@ -625,20 +625,69 @@ document.addEventListener('DOMContentLoaded', async () => {
     const onScreenKeyboard = (bubbleText && typeof OnScreenKeyboard !== 'undefined')
         ? new OnScreenKeyboard(bubbleText, {
             onEnter: () => submitBubbleInput(),
-            onEmptyBackspace: () => {
-                // Nothing typed here: delete in the phone's field instead, like the bubble's ⌫.
-                if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
-                    controlSocket.send(JSON.stringify({ type: 'keyEvent', keyCode: 67 }));
-                }
-            },
+            onEmptyBackspace: () => sendPhoneKey(67),
             onHide: () => {
-                // Fall back to the browser's own keyboard (e.g. the car's) for this field.
-                onScreenKeyboard.hide();
-                positionInputBubble(null);
-                bubbleText.focus({ preventScroll: true });
+                closeInputBubble(true);
+                // Keep it closed until the user taps a text field again.
+                if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+                    controlSocket.send(JSON.stringify({ type: 'bubbleClosed' }));
+                }
             },
         })
         : null;
+
+    function sendPhoneKey(keyCode) {
+        if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+            controlSocket.send(JSON.stringify({ type: 'keyEvent', keyCode }));
+        }
+    }
+
+    // ── Live typing ──
+    // With the on-screen keyboard there is no preview: what is typed goes straight into the
+    // phone's field. The hidden field holds the text sent since the keyboard opened; each change
+    // is sent as "delete N characters, then type this". A Korean syllable being composed is
+    // retyped as it grows (ㅎ → 하 → 한), so rapid keys are batched to keep the phone up.
+    const LIVE_SYNC_MS = 80;
+    let liveSent = '';
+    let liveTimer = null;
+
+    function syncLiveText() {
+        clearTimeout(liveTimer);
+        liveTimer = null;
+        if (!bubbleText) return;
+        const sent = [...liveSent];
+        const now = [...bubbleText.value];
+        let same = 0;
+        while (same < sent.length && same < now.length && sent[same] === now[same]) same++;
+        const backspaces = sent.length - same;
+        const text = now.slice(same).join('');
+        if (!backspaces && !text) return;
+        if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+            controlSocket.send(JSON.stringify({ type: 'compositionUpdate', backspaces, text }));
+        }
+        liveSent = bubbleText.value;
+    }
+
+    function resetLiveText() {
+        clearTimeout(liveTimer);
+        liveTimer = null;
+        liveSent = '';
+        if (bubbleText) bubbleText.value = '';
+        onScreenKeyboard?.reset();
+    }
+
+    if (onScreenKeyboard) {
+        bubbleText.addEventListener('input', () => {
+            if (!liveTimer) liveTimer = setTimeout(syncLiveText, LIVE_SYNC_MS);
+        });
+        bubbleText.addEventListener('keydown', (e) => {
+            // A real keyboard's Backspace on an empty field deletes on the phone.
+            if (e.key === 'Backspace' && bubbleText.value === '') {
+                e.preventDefault();
+                sendPhoneKey(67);
+            }
+        });
+    }
 
     // Prevent bubble touch/pointer events from propagating to canvas
     if (inputBubble) {
@@ -701,7 +750,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!inputBubble || bubbleVisible) return;
         bubbleVisible = true;
         bubbleText.value = '';
-        onScreenKeyboard?.show();
+        if (onScreenKeyboard) {
+            resetLiveText();
+            inputBubble.classList.add('proxy');
+            onScreenKeyboard.show();
+        }
         inputBubble.classList.add('visible');
         // Position once visible: offsetWidth is 0 while hidden, which let the bubble overflow.
         positionInputBubble(anchor);
@@ -711,8 +764,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     function closeInputBubble(clear = true) {
         if (!inputBubble) return;
         bubbleVisible = false;
-        inputBubble.classList.remove('visible');
+        inputBubble.classList.remove('visible', 'proxy');
         onScreenKeyboard?.hide();
+        clearTimeout(liveTimer);
+        liveTimer = null;
+        liveSent = '';
         if (clear && bubbleText) bubbleText.value = '';
         if (clear) onScreenKeyboard?.reset();
         bubbleText?.blur();
@@ -720,6 +776,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     function submitBubbleInput() {
         if (!bubbleText) return;
+        if (onScreenKeyboard) {
+            syncLiveText();          // anything still batched goes first
+            sendPhoneKey(66);
+            resetLiveText();         // the next word starts fresh
+            return;
+        }
         // Read value BEFORE blur — blur() may discard uncommitted Korean
         // IME composition on some WebView implementations instead of
         // committing it, which would leave the value empty.
