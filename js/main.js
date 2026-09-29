@@ -362,7 +362,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     function isDualStreamCapable(app) {
-        return !!app;
+        // WebRTC carries one video stream so far; a split would leave the second pane empty.
+        return !!app && !rtcRoom;
     }
 
     function destroySecondaryTransport() {
@@ -460,7 +461,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     async function enableBrowserSplit(app) {
-        if (!app) return;
+        if (!app || rtcRoom) return;
 
         if (SPLIT_STRATEGY === 'freeform') {
             // Single-VD freeform split: both apps on the same VD, single stream
@@ -1586,7 +1587,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     homeBtn.addEventListener('click', goHome);
 
     // ── Edge Swipe Handlers for Split Drawer ──
-    if (splitHandle) {
+    if (rtcRoom) {
+        // No split over WebRTC yet: hide the edge handle so it can't be opened by accident.
+        if (splitHandle) splitHandle.style.display = 'none';
+        if (splitDrawer) splitDrawer.style.display = 'none';
+    } else if (splitHandle) {
         splitHandle.addEventListener('click', () => {
             splitDrawer.classList.toggle('open');
         });
