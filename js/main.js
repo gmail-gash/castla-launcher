@@ -620,6 +620,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     const bubbleBackspace = document.getElementById('bubble-backspace');
     const bubbleCancel = document.getElementById('bubble-cancel');
 
+    // On-screen keyboard for the bubble: a desktop browser has no keyboard on screen, and the
+    // phone's own keyboard cannot appear on the virtual display.
+    const onScreenKeyboard = (bubbleText && typeof OnScreenKeyboard !== 'undefined')
+        ? new OnScreenKeyboard(bubbleText, {
+            onEnter: () => submitBubbleInput(),
+            onEmptyBackspace: () => {
+                // Nothing typed here: delete in the phone's field instead, like the bubble's ⌫.
+                if (controlSocket && controlSocket.readyState === WebSocket.OPEN) {
+                    controlSocket.send(JSON.stringify({ type: 'keyEvent', keyCode: 67 }));
+                }
+            },
+            onHide: () => {
+                // Fall back to the browser's own keyboard (e.g. the car's) for this field.
+                onScreenKeyboard.hide();
+                positionInputBubble(null);
+                bubbleText.focus({ preventScroll: true });
+            },
+        })
+        : null;
+
     // Prevent bubble touch/pointer events from propagating to canvas
     if (inputBubble) {
         for (const evt of ['pointerdown', 'pointerup', 'pointermove', 'touchstart', 'touchend', 'touchmove', 'mousedown', 'mouseup']) {
@@ -652,21 +672,26 @@ document.addEventListener('DOMContentLoaded', async () => {
         const margin = 12;
         const bw = inputBubble.offsetWidth || 360;
 
+        const bottom = window.innerHeight - (onScreenKeyboard ? onScreenKeyboard.height() : 0);
         let cx, top;
-        if (anchor) {
+        if (onScreenKeyboard && onScreenKeyboard.visible) {
+            // Sit on top of the keyboard, centred, where the eye already is.
+            cx = window.innerWidth / 2;
+            top = bottom - bh - margin;
+        } else if (anchor) {
             cx = anchor.clientX;
             top = anchor.clientY - bh - margin;
             if (top < margin) top = anchor.clientY + margin;
         } else {
             cx = window.innerWidth / 2;
-            top = window.innerHeight - bh - 60;
+            top = bottom - bh - 60;
         }
 
         let left = cx - bw / 2;
         if (left < margin) left = margin;
         if (left + bw > window.innerWidth - margin) left = window.innerWidth - margin - bw;
         if (top < margin) top = margin;
-        if (top + bh > window.innerHeight - margin) top = window.innerHeight - margin - bh;
+        if (top + bh > bottom - margin) top = bottom - margin - bh;
 
         inputBubble.style.left = `${left}px`;
         inputBubble.style.top = `${top}px`;
@@ -675,9 +700,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     function openInputBubble(anchor) {
         if (!inputBubble || bubbleVisible) return;
         bubbleVisible = true;
-        positionInputBubble(anchor);
-        inputBubble.classList.add('visible');
         bubbleText.value = '';
+        onScreenKeyboard?.show();
+        inputBubble.classList.add('visible');
+        // Position once visible: offsetWidth is 0 while hidden, which let the bubble overflow.
+        positionInputBubble(anchor);
         setTimeout(() => bubbleText.focus({ preventScroll: true }), 80);
     }
 
@@ -685,7 +712,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!inputBubble) return;
         bubbleVisible = false;
         inputBubble.classList.remove('visible');
+        onScreenKeyboard?.hide();
         if (clear && bubbleText) bubbleText.value = '';
+        if (clear) onScreenKeyboard?.reset();
         bubbleText?.blur();
     }
 
@@ -703,6 +732,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             controlSocket.send(JSON.stringify({ type: 'keyEvent', keyCode: 66 }));
         }
         bubbleText.value = '';
+        onScreenKeyboard?.reset();
     }
 
     if (bubbleSubmit) {

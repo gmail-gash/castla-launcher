@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Castla</title>
-    <link rel="stylesheet" href="css/player.css?v=fc4ad90f24">
+    <link rel="stylesheet" href="css/player.css?v=0a34fa55f5">
     <style>
         /* Web Native Launcher Styles */
         #web-launcher {
@@ -282,6 +282,46 @@
             caret-color: #64B5F6;
         }
         #bubble-text::placeholder { color: rgba(255,255,255,0.35); }
+        /* On-screen keyboard (js/keyboard.js) — sized for a car touchscreen */
+        #onscreen-keyboard {
+            position: fixed;
+            left: 50%;
+            bottom: 0;
+            transform: translateX(-50%);
+            width: min(100vw, 960px);
+            z-index: 9998;
+            display: none;
+            flex-direction: column;
+            gap: 6px;
+            padding: 8px 8px 10px;
+            box-sizing: border-box;
+            background: rgba(22, 22, 30, 0.97);
+            border-radius: 16px 16px 0 0;
+            box-shadow: 0 -8px 24px rgba(0,0,0,0.5);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: manipulation;
+        }
+        #onscreen-keyboard.visible { display: flex; }
+        .osk-row { display: flex; gap: 6px; justify-content: center; }
+        .osk-key {
+            flex: 1 1 0;
+            min-width: 0;
+            height: clamp(40px, 7vh, 56px);
+            border: none;
+            border-radius: 10px;
+            background: rgba(255,255,255,0.12);
+            color: #fff;
+            font-size: clamp(16px, 2.6vh, 22px);
+            cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .osk-key:active { background: rgba(255,255,255,0.3); }
+        .osk-key.wide { flex-grow: 1.6; font-size: clamp(14px, 2.2vh, 18px); }
+        .osk-key.space { flex-grow: 4; }
+        .osk-key.accent { background: #64B5F6; color: #111; font-weight: 600; }
+        .osk-key.active { background: #64B5F6; color: #111; }
         #bubble-text:focus { border-color: #64B5F6; }
         .bubble-btn {
             height: 36px;
@@ -801,14 +841,15 @@
 
     </div>
 
-    <script src="js/decoder.js?v=fc4ad90f24"></script>
-    <script src="js/mse-decoder.js?v=fc4ad90f24"></script>
-    <script src="js/renderer.js?v=fc4ad90f24"></script>
-    <script src="js/frame-pacer.js?v=fc4ad90f24"></script>
-    <script src="js/touch.js?v=fc4ad90f24"></script>
-    <script src="js/audio.js?v=fc4ad90f24"></script>
-    <script src="js/fallback.js?v=fc4ad90f24"></script>
-    <script src="js/webrtc.js?v=fc4ad90f24"></script>
-    <script src="js/main.js?v=fc4ad90f24"></script>
+    <script src="js/decoder.js?v=0a34fa55f5"></script>
+    <script src="js/mse-decoder.js?v=0a34fa55f5"></script>
+    <script src="js/renderer.js?v=0a34fa55f5"></script>
+    <script src="js/frame-pacer.js?v=0a34fa55f5"></script>
+    <script src="js/touch.js?v=0a34fa55f5"></script>
+    <script src="js/audio.js?v=0a34fa55f5"></script>
+    <script src="js/fallback.js?v=0a34fa55f5"></script>
+    <script src="js/webrtc.js?v=0a34fa55f5"></script>
+    <script src="js/keyboard.js?v=0a34fa55f5"></script>
+    <script src="js/main.js?v=0a34fa55f5"></script>
 </body>
 </html>
