@@ -31,10 +31,16 @@ function resolveRoom(loc) {
  * home, viewport) runs unchanged. `readyState` maps to the numeric WebSocket constants.
  */
 class DataChannelSocket {
-    constructor(channel, tap) {
+    /**
+     * @param tap    sees text messages first; returning true consumes them
+     * @param retain for messages arriving before anyone listens: true keeps the latest such
+     *               message and delivers it once `onmessage` is set (everything else is dropped)
+     */
+    constructor(channel, tap, retain) {
         this.channel = channel;
         this.onopen = null;
-        this.onmessage = null;
+        this._onmessage = null;
+        this._retained = null;
         this.onclose = null;
         this.onerror = null;
         channel.binaryType = 'arraybuffer';
@@ -43,8 +49,18 @@ class DataChannelSocket {
         channel.onerror = (e) => this.onerror && this.onerror(e);
         channel.onmessage = (event) => {
             if (tap && typeof event.data === 'string' && tap(event.data)) return;
-            if (this.onmessage) this.onmessage(event);
+            if (this._onmessage) this._onmessage(event);
+            else if (retain && retain(event.data)) this._retained = event;
         };
+    }
+
+    get onmessage() { return this._onmessage; }
+
+    set onmessage(handler) {
+        this._onmessage = handler;
+        const held = this._retained;
+        this._retained = null;
+        if (handler && held) handler(held);
     }
 
     get readyState() {
@@ -156,7 +172,10 @@ class RtcLink {
         pc.ondatachannel = (event) => {
             if (event.channel.label === 'audio') {
                 // Same bytes the WebSocket /ws/audio endpoint sends, so AudioPlayer plays it as is.
-                this.handlers.onAudioChannel(new DataChannelSocket(event.channel));
+                // The phone sends the stream config once, when the channel opens, which can be
+                // before a tap lets the page play audio. Hold on to it until the player attaches.
+                const isConfig = (data) => data instanceof ArrayBuffer && new Uint8Array(data)[0] === 0x00;
+                this.handlers.onAudioChannel(new DataChannelSocket(event.channel, null, isConfig));
             } else {
                 this.handlers.onChannel(new DataChannelSocket(event.channel, (text) => this.resolveReply(text)));
             }
