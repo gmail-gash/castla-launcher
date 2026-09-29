@@ -965,14 +965,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         const video = document.getElementById('mse-video');
         canvas.style.display = 'none';
         video.style.display = 'block';
-        // The stylesheet lets touches fall through the video to the canvas above it; over WebRTC
-        // there is no canvas, so the video itself takes them.
-        video.style.pointerEvents = 'auto';
         if (!isLauncherMode) setStatus('Connecting...', '');
-        video.addEventListener('playing', () => {
-            firstFrameReceived = true;
-            checkReady();
-        });
+        // launchApp() clears firstFrameReceived and waits for the next frame. The stream keeps
+        // playing across launches, so 'playing' fires only once; watch presented frames instead.
+        const onFrame = () => {
+            if (!firstFrameReceived) {
+                firstFrameReceived = true;
+                checkReady();
+            }
+        };
+        if (video.requestVideoFrameCallback) {
+            const everyFrame = () => { onFrame(); video.requestVideoFrameCallback(everyFrame); };
+            video.requestVideoFrameCallback(everyFrame);
+        } else {
+            video.addEventListener('timeupdate', onFrame);
+        }
         rtcLink = new RtcLink(rtcRoom, {
             onTrack: (stream) => {
                 video.srcObject = stream;
@@ -1754,7 +1761,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.addEventListener('touchstart', dismissSplash);
 
     const mseVideo = document.getElementById('mse-video');
-    if (mseVideo) mseVideo.style.pointerEvents = 'none';
+    // Touches land on the canvas; over WebRTC there is no canvas and the video takes them.
+    if (mseVideo) mseVideo.style.pointerEvents = rtcRoom ? 'auto' : 'none';
     if (canvas) canvas.style.pointerEvents = 'auto';
     if (secondaryCanvas) secondaryCanvas.style.pointerEvents = 'auto';
 
