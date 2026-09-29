@@ -82,7 +82,8 @@ class RtcLink {
     /**
      * @param {string} room
      * @param {{onTrack: function(MediaStream), onChannel: function(DataChannelSocket),
-     *          onAudioChannel: function(DataChannelSocket), onLost: function()}} handlers
+     *          onAudioChannel: function(DataChannelSocket), onLost: function(),
+     *          onReplaced: function()}} handlers
      */
     constructor(room, handlers) {
         this.topic = RTC_TOPIC_PREFIX + room;
@@ -98,6 +99,7 @@ class RtcLink {
         this.icons = new Map();
         this.partial = new Map();
         this.relay = null;
+        this.paused = false;   // another screen took the phone; wait for the user before retrying
     }
 
     start() {
@@ -125,7 +127,7 @@ class RtcLink {
             this.relay = ws;
             backoffMs = 1000;
             keepalive = setInterval(() => ws.readyState === WebSocket.OPEN && ws.send('ping'), RTC_SIGNAL_KEEPALIVE_MS);
-            if (!this.connected) this.scheduleHello(0);
+            if (!this.connected && !this.paused) this.scheduleHello(0);
         };
         ws.onmessage = (event) => this.onSignal(event.data);
         ws.onclose = () => {
@@ -138,6 +140,7 @@ class RtcLink {
 
     /** Ask the phone for a fresh connection, e.g. after the previous one dropped. */
     reconnect() {
+        if (this.paused) return;
         this.closePeer();
         this.hellos = 0;
         this.scheduleHello(0);
@@ -148,7 +151,7 @@ class RtcLink {
     scheduleHello(delayMs) {
         clearTimeout(this.helloTimer);
         this.helloTimer = setTimeout(() => {
-            if (this.connected) return;
+            if (this.connected || this.paused) return;
             if (document.hidden) {
                 // Nobody is looking; ask again as soon as the page is visible.
                 document.addEventListener('visibilitychange', () => this.scheduleHello(0), { once: true });
@@ -190,7 +193,7 @@ class RtcLink {
 
         let msg;
         try { msg = JSON.parse(parts.join('')); } catch (_) { return; }
-        if (msg.type !== 'offer' || this.connected) return;
+        if (msg.type !== 'offer' || this.connected || this.paused) return;
         // Don't say hello again while this offer is being answered; the phone would take it as
         // a request to start over. If negotiation stalls, the next hello asks for a fresh offer.
         this.scheduleHello(RTC_NEGOTIATION_MS);
@@ -219,7 +222,7 @@ class RtcLink {
                 const isConfig = (data) => data instanceof ArrayBuffer && new Uint8Array(data)[0] === 0x00;
                 this.handlers.onAudioChannel(new DataChannelSocket(event.channel, null, isConfig));
             } else {
-                this.handlers.onChannel(new DataChannelSocket(event.channel, (text) => this.resolveReply(text)));
+                this.handlers.onChannel(new DataChannelSocket(event.channel, (text) => this.onControlText(text)));
             }
         };
         pc.onconnectionstatechange = () => {
@@ -284,6 +287,31 @@ class RtcLink {
                 .catch(() => { this.icons.delete(pkg); return null; }));
         }
         return this.icons.get(pkg);
+    }
+
+    /** Sees control messages first; returns true when it consumed one. */
+    onControlText(text) {
+        if (text.includes('"replaced"')) {
+            let msg = null;
+            try { msg = JSON.parse(text); } catch (_) {}
+            if (msg && msg.type === 'replaced') {
+                // The phone moved to a screen opened later. Reconnecting on our own would take it
+                // back, and the two screens would keep trading it.
+                console.log('[RTC] Another screen took over the phone');
+                this.paused = true;
+                clearTimeout(this.helloTimer);
+                this.closePeer();
+                this.handlers.onReplaced();
+                return true;
+            }
+        }
+        return this.resolveReply(text);
+    }
+
+    /** Reconnect after {@link onControlText} paused for another screen. */
+    resume() {
+        this.paused = false;
+        this.reconnect();
     }
 
     /** Hands replies to pending requests; returns true when the message was one. */

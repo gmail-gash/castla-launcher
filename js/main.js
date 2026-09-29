@@ -1000,6 +1000,17 @@ document.addEventListener('DOMContentLoaded', async () => {
                     showOverlay();
                 }
             },
+            onReplaced: () => {
+                setStatus('Opened on another screen — tap to reconnect', 'error');
+                showOverlay();
+                const resume = (event) => {
+                    event.stopPropagation();
+                    document.removeEventListener('click', resume, true);
+                    setStatus('Connecting...', '');
+                    rtcLink.resume();
+                };
+                document.addEventListener('click', resume, true);   // anywhere on the page
+            },
         });
         rtcLink.start();
     }
