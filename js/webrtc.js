@@ -124,14 +124,27 @@ class RtcLink {
         events.onerror = () => console.warn('[RTC] Signaling stream interrupted — retrying');
     }
 
+    /** Tell the page how far the connection got, for the loading screen. */
+    stage(text) {
+        if (this.handlers.onStage) this.handlers.onStage(text);
+    }
+
     /** Join the room on the WebSocket relay; reopen with backoff whenever it drops. */
     openRelay(backoffMs) {
         const room = this.topic.slice(RTC_TOPIC_PREFIX.length);
-        const ws = new WebSocket(`${RTC_SIGNAL_URL}?room=${room}`);
+        this.stage('신호 서버 연결 중…');
+        let ws;
+        try {
+            ws = new WebSocket(`${RTC_SIGNAL_URL}?room=${room}`);
+        } catch (e) {
+            this.stage(`신호 서버에 연결할 수 없음 (${e.message})`);
+            return;
+        }
         let keepalive = null;
         ws.onopen = () => {
             this.relay = ws;
             backoffMs = 1000;
+            if (!this.connected) this.stage('폰 기다리는 중… (폰에서 미러링 시작)');
             keepalive = setInterval(() => ws.readyState === WebSocket.OPEN && ws.send('ping'), RTC_SIGNAL_KEEPALIVE_MS);
             if (!this.connected && !this.paused) this.scheduleHello(0);
         };
@@ -139,6 +152,7 @@ class RtcLink {
         ws.onclose = () => {
             clearInterval(keepalive);
             if (this.relay === ws) this.relay = null;
+            if (!this.connected) this.stage(`신호 서버 연결 끊김 — ${backoffMs / 1000}초 뒤 재시도`);
             console.warn(`[RTC] Signaling relay closed — retrying in ${backoffMs / 1000}s`);
             setTimeout(() => this.openRelay(Math.min(backoffMs * 2, 30000)), backoffMs);
         };
@@ -215,6 +229,7 @@ class RtcLink {
     /* ---------- peer ---------- */
 
     async answer(sdp) {
+        this.stage('폰 찾음 — 같은 Wi‑Fi로 연결 중…');
         this.closePeer();
         const pc = new RTCPeerConnection({ iceServers: [] });
         this.pc = pc;
@@ -239,9 +254,12 @@ class RtcLink {
             if (pc !== this.pc) return;
             console.log('[RTC] Connection:', pc.connectionState);
             if (pc.connectionState === 'connected') {
+                this.stage('연결됨');
                 this.connected = true;
                 clearTimeout(this.helloTimer);
             } else if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+                // Signaling worked but the direct link did not: usually not on the phone's Wi-Fi.
+                if (pc.connectionState === 'failed') this.stage('폰에 직접 연결 실패 — 차와 폰이 같은 Wi‑Fi인지 확인');
                 this.handlers.onLost();
                 this.reconnect();
             }

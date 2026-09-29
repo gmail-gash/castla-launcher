@@ -1102,6 +1102,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                     showOverlay();
                 }
             },
+            onStage: (text) => {
+                // Loading screen shows how far the connection got, so a stall can be told apart.
+                const label = document.querySelector('#splash-loading .splash-loading-text');
+                if (label) label.textContent = text;
+                console.log('[RTC] Stage:', text);
+            },
             onReplaced: () => {
                 setStatus('Opened on another screen — tap to reconnect', 'error');
                 showOverlay();
