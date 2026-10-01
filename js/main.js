@@ -30,6 +30,10 @@ const apiBase = `http://${host}`;
 // `?r=<room code>` selects the WebRTC transport (see webrtc.js); without it the page talks to
 // the phone over WebSockets as before.
 const rtcRoom = resolveRoom(window.location);
+// WebRTC frames are painted on the canvas; `?video=1` plays them in the <video> element instead.
+const rtcCanvas = !!rtcRoom && new URLSearchParams(window.location.search).get('video') !== '1';
+let rtcRenderer = null;
+let stopRtcPainter = null;
 let rtcLink = null;
 let rtcAudioSocket = null;   // waits here until a tap unlocks audio
 
@@ -175,6 +179,7 @@ const initializeLauncher = async () => {
     }
 
     function getActiveRenderer() {
+        if (rtcRenderer) return rtcRenderer;
         return decoder && decoder.renderer ? decoder.renderer : null;
     }
 
@@ -1063,11 +1068,64 @@ const initializeLauncher = async () => {
         videoSocket.onerror = (error) => console.error('[Main] Video WebSocket error:', error);
     }
 
-    /** WebRTC transport: video into the <video> element, control over the data channel. */
+    /**
+     * Paints a WebRTC stream on the canvas and returns a function that stops it.
+     * Decoded frames are read straight from the track; a browser without
+     * MediaStreamTrackProcessor decodes in an unseen <video> and its frames are copied.
+     */
+    function paintRtcStream(stream, video, renderer, onFrame) {
+        const track = stream.getVideoTracks()[0];
+        let stopped = false;
+        if (track && typeof MediaStreamTrackProcessor === 'function') {
+            console.log('[RTC] Canvas painter: track processor');
+            video.style.display = 'none';
+            const reader = new MediaStreamTrackProcessor({ track }).readable.getReader();
+            (async () => {
+                try {
+                    for (;;) {
+                        const { value, done } = await reader.read();
+                        if (done || stopped) { if (value) value.close(); break; }
+                        renderer.render(value);     // closes the frame
+                        onFrame();
+                    }
+                } catch (e) {
+                    if (!stopped) console.warn('[RTC] Canvas painter stopped:', e);
+                }
+            })();
+            return () => { stopped = true; reader.cancel().catch(() => {}); };
+        }
+        console.log('[RTC] Canvas painter: copying from <video>');
+        Object.assign(video.style, {
+            display: 'block', position: 'absolute', width: '1px', height: '1px', opacity: '0', pointerEvents: 'none'
+        });
+        video.srcObject = stream;
+        video.play().catch(() => {});
+        const next = video.requestVideoFrameCallback
+            ? () => video.requestVideoFrameCallback(draw)
+            : () => requestAnimationFrame(draw);
+        const draw = () => {
+            if (stopped) return;
+            if (video.videoWidth > 0) {
+                renderer.render(video);
+                onFrame();
+            }
+            next();
+        };
+        next();
+        return () => { stopped = true; video.srcObject = null; };
+    }
+
+    /** WebRTC transport: video onto the canvas (or the <video> element), control over the data channel. */
     function connectRtc() {
         const video = document.getElementById('mse-video');
-        canvas.style.display = 'none';
-        video.style.display = 'block';
+        if (rtcCanvas) {
+            rtcRenderer = new CanvasRenderer(canvas);
+            rtcRenderer.setFitMode(getEffectivePrimaryFitMode());
+            video.style.display = 'none';
+        } else {
+            canvas.style.display = 'none';
+            video.style.display = 'block';
+        }
         if (!isLauncherMode) setStatus('Connecting...', '');
         // launchApp() clears firstFrameReceived and waits for the next frame. The stream keeps
         // playing across launches, so 'playing' fires only once; watch presented frames instead.
@@ -1077,7 +1135,9 @@ const initializeLauncher = async () => {
                 checkReady();
             }
         };
-        if (video.requestVideoFrameCallback) {
+        if (rtcCanvas) {
+            // The painter reports each frame itself.
+        } else if (video.requestVideoFrameCallback) {
             const everyFrame = () => { onFrame(); video.requestVideoFrameCallback(everyFrame); };
             video.requestVideoFrameCallback(everyFrame);
         } else {
@@ -1085,6 +1145,11 @@ const initializeLauncher = async () => {
         }
         rtcLink = new RtcLink(rtcRoom, {
             onTrack: (stream) => {
+                if (rtcCanvas) {
+                    if (stopRtcPainter) stopRtcPainter();
+                    stopRtcPainter = paintRtcStream(stream, video, rtcRenderer, onFrame);
+                    return;
+                }
                 video.srcObject = stream;
                 video.play().catch(() => {});
             },
@@ -1127,7 +1192,7 @@ const initializeLauncher = async () => {
         if (firstFrameReceived) {
             clearLaunchTimeout();
             const mseVideo = document.getElementById('mse-video');
-            if (codecMode === 'mjpeg') {
+            if (codecMode === 'mjpeg' || rtcCanvas) {
                 canvas.style.opacity = '1';
                 if (mseVideo) mseVideo.style.opacity = '0';
             } else {
@@ -1265,9 +1330,9 @@ const initializeLauncher = async () => {
         controlSocket.onopen = () => {
             closeInputBubble(true);
             if (touchHandler) touchHandler.destroy();
-            const renderer = (decoder && decoder.renderer) ? decoder.renderer : null;
-            // WebRTC video plays in the <video> element, which also accounts for letterboxing.
-            touchHandler = rtcRoom
+            const renderer = getActiveRenderer();
+            // WebRTC video in the <video> element: the element also accounts for letterboxing.
+            touchHandler = rtcRoom && !rtcCanvas
                 ? new TouchHandler(document.getElementById('mse-video'), null, controlSocket, 'primary')
                 : new TouchHandler(canvas, renderer, controlSocket, 'primary');
             if (SPLIT_STRATEGY === 'dual_stream' && browserSplitState.active && secondaryCanvas) {
@@ -1999,8 +2064,8 @@ const initializeLauncher = async () => {
     document.addEventListener('touchstart', dismissSplash);
 
     const mseVideo = document.getElementById('mse-video');
-    // Touches land on the canvas; over WebRTC there is no canvas and the video takes them.
-    if (mseVideo) mseVideo.style.pointerEvents = rtcRoom ? 'auto' : 'none';
+    // Touches land on the canvas; when WebRTC plays in the <video> element, that takes them.
+    if (mseVideo) mseVideo.style.pointerEvents = rtcRoom && !rtcCanvas ? 'auto' : 'none';
     if (canvas) canvas.style.pointerEvents = 'auto';
     if (secondaryCanvas) secondaryCanvas.style.pointerEvents = 'auto';
 

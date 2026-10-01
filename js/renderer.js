@@ -28,12 +28,12 @@ class CanvasRenderer {
     }
 
     /**
-     * Render a VideoFrame to the canvas
-     * @param {VideoFrame} frame
+     * Render a VideoFrame (or a playing <video> element) to the canvas
+     * @param {VideoFrame|HTMLVideoElement} frame
      */
     render(frame) {
-        const sourceWidth = frame.displayWidth || frame.width;
-        const sourceHeight = frame.displayHeight || frame.height;
+        const sourceWidth = frame.displayWidth || frame.videoWidth || frame.width;
+        const sourceHeight = frame.displayHeight || frame.videoHeight || frame.height;
 
         if (sourceWidth !== this.videoWidth || sourceHeight !== this.videoHeight) {
             this.videoWidth = sourceWidth;
