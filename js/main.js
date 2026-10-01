@@ -1421,24 +1421,98 @@ const initializeLauncher = async () => {
         return JSON.parse(new TextDecoder().decode(bytes));
     }
 
-    // The room relay limits bursts to 20 messages and 10 messages per second. Loading every
-    // launcher icon at once exceeds that limit, so serialize icon fetches at four per second.
+    // Cache icons between page loads and share each package request between the main and split
+    // launchers. The split drawer is hidden at startup, so don't spend relay capacity on it yet.
+    let iconCacheDb;
+    const iconConsumers = new Map();
+    const iconRequests = new Set();
+    const iconDataUrls = new Map();
     let iconProxyQueue = Promise.resolve();
     let lastIconRequestAt = 0;
-    function setAppIcon(img, pkg) {
+    const iconObserver = typeof IntersectionObserver !== 'undefined'
+        ? new IntersectionObserver((entries) => entries.forEach((entry) => {
+            if (!entry.isIntersecting) return;
+            iconObserver.unobserve(entry.target);
+            loadAppIcon(entry.target, entry.target.dataset.iconPackage);
+        }), { rootMargin: '120px' }) : null;
+
+    function openIconCache() {
+        if (!window.indexedDB) return Promise.resolve(null);
+        if (iconCacheDb) return iconCacheDb;
+        iconCacheDb = new Promise((resolve) => {
+            const request = indexedDB.open('castla-launcher', 1);
+            request.onupgradeneeded = () => request.result.createObjectStore('icons');
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => resolve(null);
+        });
+        return iconCacheDb;
+    }
+
+    async function readCachedIcon(pkg) {
+        const db = await openIconCache();
+        if (!db) return null;
+        return new Promise((resolve) => {
+            const request = db.transaction('icons').objectStore('icons').get(pkg);
+            request.onsuccess = () => resolve(request.result || null);
+            request.onerror = () => resolve(null);
+        });
+    }
+
+    async function cacheIcon(pkg, dataUrl) {
+        const db = await openIconCache();
+        if (!db) return;
+        await new Promise((resolve) => {
+            const tx = db.transaction('icons', 'readwrite');
+            tx.objectStore('icons').put(dataUrl, pkg);
+            tx.oncomplete = tx.onerror = tx.onabort = resolve;
+        });
+    }
+
+    function showIcon(pkg, dataUrl) {
+        iconDataUrls.set(pkg, dataUrl);
+        (iconConsumers.get(pkg) || []).forEach((img) => { img.src = dataUrl; });
+    }
+
+    function loadAppIcon(img, pkg) {
+        if (!pkg) return;
         if (!rtcRoom) {
             img.src = `${apiBase}/api/icon?pkg=${encodeURIComponent(pkg)}`;
             return;
         }
-        iconProxyQueue = iconProxyQueue.then(async () => {
-            const delay = Math.max(0, 250 - (Date.now() - lastIconRequestAt));
-            if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
-            lastIconRequestAt = Date.now();
-            const response = await rtcLink.httpGet(`/api/icon?pkg=${encodeURIComponent(pkg)}`);
-            if (response.status >= 200 && response.status < 300 && response.bodyBase64) {
-                img.src = `data:${response.contentType || 'image/png'};base64,${response.bodyBase64}`;
+        if (iconDataUrls.has(pkg)) {
+            img.src = iconDataUrls.get(pkg);
+            return;
+        }
+        if (!iconConsumers.has(pkg)) iconConsumers.set(pkg, []);
+        iconConsumers.get(pkg).push(img);
+        if (iconRequests.has(pkg)) return;
+        iconRequests.add(pkg);
+        (async () => {
+            const cached = await readCachedIcon(pkg);
+            if (cached) {
+                showIcon(pkg, cached);
+                return;
             }
-        }).catch((err) => console.warn(`[Launcher] Icon proxy failed for ${pkg}:`, err));
+            iconProxyQueue = iconProxyQueue.then(async () => {
+                const delay = Math.max(0, 250 - (Date.now() - lastIconRequestAt));
+                if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+                lastIconRequestAt = Date.now();
+                const response = await rtcLink.httpGet(`/api/icon?pkg=${encodeURIComponent(pkg)}`);
+                if (response.status < 200 || response.status >= 300 || !response.bodyBase64) return;
+                const dataUrl = `data:${response.contentType || 'image/png'};base64,${response.bodyBase64}`;
+                showIcon(pkg, dataUrl);
+                await cacheIcon(pkg, dataUrl);
+            }).catch((err) => {
+                iconRequests.delete(pkg);
+                console.warn(`[Launcher] Icon proxy failed for ${pkg}:`, err);
+            });
+        })();
+    }
+
+    function setAppIcon(img, pkg) {
+        img.dataset.iconPackage = pkg;
+        if (iconObserver) iconObserver.observe(img);
+        else loadAppIcon(img, pkg);
     }
 
     async function loadLauncherApps() {
