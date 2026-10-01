@@ -24,6 +24,9 @@ const RTC_HELLO_FAST_MS = 5000;                // first 30 s: the phone may be s
 const RTC_HELLO_SLOW_MS = 30000;               // then once every 30 s
 const RTC_HELLO_FAST_COUNT = 6;
 const RTC_NEGOTIATION_MS = 10000;              // matches HelloPolicy.NEGOTIATION_WINDOW_MS on the phone
+// A screen that gets offers but never connects (not on the phone's network) would otherwise
+// keep saying hello, and every hello takes the phone away from the screen that does work.
+const RTC_UNREACHABLE_OFFERS = 3;
 const RTC_REQUEST_TIMEOUT_MS = 15000;
 const RTC_HTTP_REQUEST_TIMEOUT_MS = 60000;
 // Receive-side buffer. 2.4 GHz Wi-Fi shows ~200 ms latency spikes; with Chrome's default ~80 ms
@@ -109,6 +112,7 @@ class RtcLink {
         this.partial = new Map();
         this.relay = null;
         this.paused = false;   // another screen took the phone; wait for the user before retrying
+        this.unansweredOffers = 0;   // offers answered since the last connection
     }
 
     start() {
@@ -236,6 +240,16 @@ class RtcLink {
             if (this.answerSdp) this.publish({ type: 'answer', sdp: this.answerSdp });
             return;
         }
+        if (this.unansweredOffers >= RTC_UNREACHABLE_OFFERS) {
+            console.log('[RTC] Phone unreachable — waiting for the user before asking again');
+            this.paused = true;
+            clearTimeout(this.helloTimer);
+            this.closePeer();
+            this.stage('폰에 직접 연결할 수 없음 — 폰과 같은 Wi‑Fi가 아닙니다');
+            if (this.handlers.onUnreachable) this.handlers.onUnreachable();
+            return;
+        }
+        this.unansweredOffers++;
         this.answer(msg.sdp);
     }
 
@@ -269,6 +283,7 @@ class RtcLink {
             if (pc.connectionState === 'connected') {
                 this.stage('연결됨');
                 this.connected = true;
+                this.unansweredOffers = 0;
                 clearTimeout(this.helloTimer);
             } else if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
                 // Signaling worked but the direct link did not: usually not on the phone's Wi-Fi.
@@ -367,9 +382,10 @@ class RtcLink {
         return this.resolveReply(text);
     }
 
-    /** Reconnect after {@link onControlText} paused for another screen. */
+    /** Reconnect after pausing for another screen or an unreachable phone. */
     resume() {
         this.paused = false;
+        this.unansweredOffers = 0;
         this.reconnect();
     }
 

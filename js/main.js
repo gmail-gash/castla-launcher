@@ -1173,19 +1173,22 @@ const initializeLauncher = async () => {
                 if (label) label.textContent = text;
                 console.log('[RTC] Stage:', text);
             },
-            onReplaced: () => {
-                setStatus('Opened on another screen — tap to reconnect', 'error');
-                showOverlay();
-                const resume = (event) => {
-                    event.stopPropagation();
-                    document.removeEventListener('click', resume, true);
-                    setStatus('Connecting...', '');
-                    rtcLink.resume();
-                };
-                document.addEventListener('click', resume, true);   // anywhere on the page
-            },
+            onReplaced: () => waitForTapToResume('Opened on another screen — tap to reconnect'),
+            onUnreachable: () => waitForTapToResume('폰과 같은 Wi‑Fi가 아닙니다 — 탭하여 다시 연결'),
         });
         rtcLink.start();
+
+        function waitForTapToResume(message) {
+            setStatus(message, 'error');
+            showOverlay();
+            const resume = (event) => {
+                event.stopPropagation();
+                document.removeEventListener('click', resume, true);
+                setStatus('Connecting...', '');
+                rtcLink.resume();
+            };
+            document.addEventListener('click', resume, true);   // anywhere on the page
+        }
     }
 
     function checkReady() {
