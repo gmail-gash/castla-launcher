@@ -17,24 +17,65 @@ var PROXY_SIGNAL_URL = 'wss://eelqunk48d.execute-api.ap-northeast-2.amazonaws.co
     if (!location.hostname.endsWith('gash.clop.ai')) return;
     window.CASTLA_HTTP_BOOTSTRAP = true;
 
-    const splash = () => document.querySelector('#splash-loading .splash-loading-text');
-    const status = (text) => { const el = splash(); if (el) el.textContent = text; };
-    if (!PROXY_SIGNAL_URL) { status('폰 HTTP 터널 설정이 필요합니다.'); return; }
-
     const self = 'car-boot-' + Math.random().toString(36).slice(2, 10);
-    const messages = new Map();
+    const ATTEMPT_TIMEOUT_MS = 20000;
+    const HELLO_INTERVAL_MS = 5000;             // the phone may start mirroring after the page opened
+    const RETRY_DELAYS_MS = [2000, 4000, 8000, 15000];
+    let messages = new Map();
     let phone = null;
     let requestId = null;
     let finished = false;
-    let socket;
-    const timeout = setTimeout(() => fail('폰 HTTP 터널 응답 시간 초과 — 미러링을 시작한 뒤 새로고침하세요.'), 20000);
+    let socket = null;
+    let timeout = null;
+    let helloTimer = null;
+    let retryTimer = null;
+    let failures = 0;
+    let lastStatus = null;
+    let retryButton = null;
 
+    const splash = () => document.querySelector('#splash-loading .splash-loading-text');
+    const status = (text) => { lastStatus = text; const el = splash(); if (el) el.textContent = text; };
+    // This script runs in <head>, before the splash exists; show what was missed once it does.
+    document.addEventListener('DOMContentLoaded', () => {
+        if (finished) return;
+        if (lastStatus) status(lastStatus);
+        showRetryButton(retryTimer !== null);
+    });
+    if (!PROXY_SIGNAL_URL) { status('폰 HTTP 터널 설정이 필요합니다.'); return; }
+
+    function showRetryButton(visible) {
+        if (!retryButton) {
+            const box = document.getElementById('splash-loading');
+            if (!box) return;
+            retryButton = document.createElement('button');
+            retryButton.type = 'button';
+            retryButton.textContent = '다시 연결';
+            retryButton.style.cssText = 'margin-top:12px;padding:10px 24px;font-size:15px;color:#fff;' +
+                'background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.3);border-radius:8px';
+            retryButton.addEventListener('click', connect);
+            box.appendChild(retryButton);
+        }
+        retryButton.style.display = visible ? '' : 'none';
+    }
+
+    function closeAttempt() {
+        clearTimeout(timeout);
+        clearInterval(helloTimer);
+        clearTimeout(retryTimer);
+        retryTimer = null;
+        const ws = socket;
+        socket = null;          // handlers of a closed attempt check this and stay quiet
+        try { ws && ws.close(); } catch (_) {}
+    }
+
+    /** Nothing here is final: the phone may not be mirroring yet, so every failure tries again. */
     function fail(text) {
         if (finished) return;
-        finished = true;
-        clearTimeout(timeout);
-        status(text);
-        try { socket && socket.close(); } catch (_) {}
+        closeAttempt();
+        status(text + ' 자동으로 다시 연결합니다.');
+        const delay = RETRY_DELAYS_MS[Math.min(failures++, RETRY_DELAYS_MS.length - 1)];
+        retryTimer = setTimeout(connect, delay);
+        showRetryButton(true);
     }
 
     function publish(payload) {
@@ -75,7 +116,7 @@ var PROXY_SIGNAL_URL = 'wss://eelqunk48d.execute-api.ap-northeast-2.amazonaws.co
         }
         if (message.type !== 'http_response' || message.to !== self || message.requestId !== requestId) return;
         if (message.status < 200 || message.status >= 300 || !message.bodyBase64) {
-            fail('폰에서 미러링 페이지를 가져오지 못했습니다.');
+            fail('폰에서 미러링 페이지를 가져오지 못했습니다 (HTTP ' + message.status + ').');
             return;
         }
         try {
@@ -86,27 +127,47 @@ var PROXY_SIGNAL_URL = 'wss://eelqunk48d.execute-api.ap-northeast-2.amazonaws.co
                 throw new Error('Invalid phone page response');
             }
             finished = true;
-            clearTimeout(timeout);
             const next = new URL(location.href);
             next.searchParams.set('castla_phone_html', '1');
             history.replaceState(null, '', next.pathname + next.search + next.hash);
-            try { socket.close(); } catch (_) {}
+            closeAttempt();
             document.open();
             document.write(html);
             document.close();
         } catch (e) {
-            fail('폰 페이지를 표시하지 못했습니다: ' + e.message);
+            finished = false;
+            fail('폰 페이지를 표시하지 못했습니다: ' + e.message + '.');
         }
     }
 
-    try {
+    function connect() {
+        if (finished) return;
+        closeAttempt();
+        showRetryButton(false);
+        messages = new Map();
+        phone = null;
+        requestId = null;
         status('AWS를 통해 폰 HTTP 터널에 연결 중…');
-        socket = new WebSocket(PROXY_SIGNAL_URL + '?room=' + encodeURIComponent(room));
-        socket.onopen = () => publish({ type: 'hello' });
-        socket.onmessage = (event) => receivePart(event.data);
-        socket.onerror = () => fail('AWS 터널에 연결할 수 없습니다.');
-        socket.onclose = () => { if (!finished) fail('AWS 터널 연결이 끊겼습니다.'); };
-    } catch (e) {
-        fail('AWS 터널에 연결할 수 없습니다: ' + e.message);
+        let ws;
+        try {
+            ws = new WebSocket(PROXY_SIGNAL_URL + '?room=' + encodeURIComponent(room));
+        } catch (e) {
+            fail('AWS 터널에 연결할 수 없습니다: ' + e.message + '.');
+            return;
+        }
+        socket = ws;
+        timeout = setTimeout(() => fail('폰 응답이 없습니다 — 폰에서 미러링을 시작하세요.'), ATTEMPT_TIMEOUT_MS);
+        const hello = () => { if (ws === socket && !requestId && ws.readyState === WebSocket.OPEN) publish({ type: 'hello' }); };
+        ws.onopen = () => {
+            if (ws !== socket) return;
+            status('폰 응답을 기다리는 중…');
+            hello();
+            helloTimer = setInterval(hello, HELLO_INTERVAL_MS);
+        };
+        ws.onmessage = (event) => { if (ws === socket) receivePart(event.data); };
+        ws.onerror = () => { if (ws === socket) fail('AWS 터널에 연결할 수 없습니다.'); };
+        ws.onclose = () => { if (ws === socket) fail('AWS 터널 연결이 끊겼습니다.'); };
     }
+
+    connect();
 })();

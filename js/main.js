@@ -1429,6 +1429,8 @@ const initializeLauncher = async () => {
     const iconDataUrls = new Map();
     let iconProxyQueue = Promise.resolve();
     let lastIconRequestAt = 0;
+    const ICON_MAX_RETRIES = 2;
+    const ICON_RETRY_DELAY_MS = 3000;
     const iconObserver = typeof IntersectionObserver !== 'undefined'
         ? new IntersectionObserver((entries) => entries.forEach((entry) => {
             if (!entry.isIntersecting) return;
@@ -1493,20 +1495,33 @@ const initializeLauncher = async () => {
                 showIcon(pkg, cached);
                 return;
             }
-            iconProxyQueue = iconProxyQueue.then(async () => {
-                const delay = Math.max(0, 250 - (Date.now() - lastIconRequestAt));
-                if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
-                lastIconRequestAt = Date.now();
-                const response = await rtcLink.httpGet(`/api/icon?pkg=${encodeURIComponent(pkg)}`);
-                if (response.status < 200 || response.status >= 300 || !response.bodyBase64) return;
-                const dataUrl = `data:${response.contentType || 'image/png'};base64,${response.bodyBase64}`;
-                showIcon(pkg, dataUrl);
-                await cacheIcon(pkg, dataUrl);
-            }).catch((err) => {
-                iconRequests.delete(pkg);
-                console.warn(`[Launcher] Icon proxy failed for ${pkg}:`, err);
-            });
+            requestIconOverProxy(pkg, 0);
         })();
+    }
+
+    function requestIconOverProxy(pkg, attempt) {
+        iconProxyQueue = iconProxyQueue.then(async () => {
+            const delay = Math.max(0, 250 - (Date.now() - lastIconRequestAt));
+            if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+            lastIconRequestAt = Date.now();
+            const response = await rtcLink.httpGet(`/api/icon?pkg=${encodeURIComponent(pkg)}`);
+            // The phone answers 404 for an app without an icon; asking again won't change that.
+            if (response.status >= 400 && response.status < 500) return;
+            if (response.status < 200 || response.status >= 300 || !response.bodyBase64) {
+                throw new Error(`Phone HTTP ${response.status}`);
+            }
+            const dataUrl = `data:${response.contentType || 'image/png'};base64,${response.bodyBase64}`;
+            showIcon(pkg, dataUrl);
+            cacheIcon(pkg, dataUrl).catch(() => {});
+        }).catch((err) => {
+            if (attempt < ICON_MAX_RETRIES) {
+                setTimeout(() => requestIconOverProxy(pkg, attempt + 1), ICON_RETRY_DELAY_MS * (attempt + 1));
+                return;
+            }
+            // Give up for now, but let the next render of the launcher ask again.
+            iconRequests.delete(pkg);
+            console.warn(`[Launcher] Icon proxy failed for ${pkg}:`, err);
+        });
     }
 
     function setAppIcon(img, pkg) {
