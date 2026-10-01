@@ -56,10 +56,11 @@ const PROXY_SIGNAL_URL = 'wss://eelqunk48d.execute-api.ap-northeast-2.amazonaws.
                 part.i < 0 || part.i >= part.n) return;
         const key = part.from + ':' + part.id;
         let state = messages.get(key);
-        if (!state) { state = { from: part.from, chunks: new Array(part.n) }; messages.set(key, state); }
+        if (!state) { state = { from: part.from, chunks: new Array(part.n), received: 0 }; messages.set(key, state); }
         if (state.chunks.length !== part.n) return;
+        if (state.chunks[part.i] === undefined) state.received++;
         state.chunks[part.i] = part.d;
-        if (state.chunks.some((chunk) => chunk === undefined)) return;
+        if (state.received < part.n) return;
         messages.delete(key);
         let message;
         try { message = JSON.parse(state.chunks.join('')); } catch (_) { return; }
