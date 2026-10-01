@@ -3,7 +3,7 @@
  * This tiny pre-loader asks the phone over the room WebSocket for /, using the same chunk format
  * as SignalChunker. The phone's request is made through its 10.200.0.1 TUN endpoint.
  */
-const PROXY_SIGNAL_URL = 'wss://eelqunk48d.execute-api.ap-northeast-2.amazonaws.com/prod';
+var PROXY_SIGNAL_URL = 'wss://eelqunk48d.execute-api.ap-northeast-2.amazonaws.com/prod';
 (function () {
     const params = new URLSearchParams(location.search);
     const room = params.get('r');
