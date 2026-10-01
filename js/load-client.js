@@ -9,7 +9,7 @@
         const next = () => {
             if (index >= scripts.length) return;
             const script = document.createElement('script');
-            script.src = `js/${scripts[index++]}?v=d925730bac2`;
+            script.src = `js/${scripts[index++]}?v=icons-20261001a`;
             script.onload = next;
             script.onerror = () => console.error('[Castla] Failed to load', script.src);
             document.body.appendChild(script);

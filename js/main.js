@@ -1421,16 +1421,24 @@ const initializeLauncher = async () => {
         return JSON.parse(new TextDecoder().decode(bytes));
     }
 
+    // The room relay limits bursts to 20 messages and 10 messages per second. Loading every
+    // launcher icon at once exceeds that limit, so serialize icon fetches at four per second.
+    let iconProxyQueue = Promise.resolve();
+    let lastIconRequestAt = 0;
     function setAppIcon(img, pkg) {
         if (!rtcRoom) {
             img.src = `${apiBase}/api/icon?pkg=${encodeURIComponent(pkg)}`;
             return;
         }
-        rtcLink.httpGet(`/api/icon?pkg=${encodeURIComponent(pkg)}`).then((response) => {
+        iconProxyQueue = iconProxyQueue.then(async () => {
+            const delay = Math.max(0, 250 - (Date.now() - lastIconRequestAt));
+            if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+            lastIconRequestAt = Date.now();
+            const response = await rtcLink.httpGet(`/api/icon?pkg=${encodeURIComponent(pkg)}`);
             if (response.status >= 200 && response.status < 300 && response.bodyBase64) {
                 img.src = `data:${response.contentType || 'image/png'};base64,${response.bodyBase64}`;
             }
-        }).catch((err) => console.warn('[Launcher] Icon proxy failed:', err));
+        }).catch((err) => console.warn(`[Launcher] Icon proxy failed for ${pkg}:`, err));
     }
 
     async function loadLauncherApps() {

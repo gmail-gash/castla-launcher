@@ -25,6 +25,7 @@ const RTC_HELLO_SLOW_MS = 30000;               // then once every 30 s
 const RTC_HELLO_FAST_COUNT = 6;
 const RTC_NEGOTIATION_MS = 10000;              // matches HelloPolicy.NEGOTIATION_WINDOW_MS on the phone
 const RTC_REQUEST_TIMEOUT_MS = 15000;
+const RTC_HTTP_REQUEST_TIMEOUT_MS = 60000;
 // Receive-side buffer. 2.4 GHz Wi-Fi shows ~200 ms latency spikes; with Chrome's default ~80 ms
 // target each one froze the picture. Costs ~70 ms of extra delay. Override with ?jb=<ms>.
 const RTC_JITTER_BUFFER_MS = (() => {
@@ -331,7 +332,7 @@ class RtcLink {
             waiter.timer = setTimeout(() => {
                 this.httpWaiters.delete(requestId);
                 reject(new Error('Phone HTTP tunnel timed out'));
-            }, RTC_REQUEST_TIMEOUT_MS);
+            }, RTC_HTTP_REQUEST_TIMEOUT_MS);
             this.httpWaiters.set(requestId, waiter);
             this.publish({ type: 'http_request', method: 'GET', path, requestId, to: this.phoneId });
         });
