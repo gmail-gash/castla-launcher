@@ -9,7 +9,7 @@
         const next = () => {
             if (index >= scripts.length) return;
             const script = document.createElement('script');
-            script.src = `js/${scripts[index++]}?v=d925730bac1`;
+            script.src = `js/${scripts[index++]}?v=d925730bac2`;
             script.onload = next;
             script.onerror = () => console.error('[Castla] Failed to load', script.src);
             document.body.appendChild(script);
@@ -17,7 +17,7 @@
         next();
     };
 
-    if (window.CASTLA_HTTP_BOOTSTRAP) {
+    if (window.CASTLA_HTTP_BOOTSTRAP && !window.CASTLA_PHONE_HTML_READY) {
         window.addEventListener('castla:phone-html-ready', load, { once: true });
     } else {
         load();

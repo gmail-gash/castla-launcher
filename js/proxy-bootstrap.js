@@ -9,6 +9,7 @@ var PROXY_SIGNAL_URL = 'wss://eelqunk48d.execute-api.ap-northeast-2.amazonaws.co
     const room = params.get('r');
     window.CASTLA_HTTP_BOOTSTRAP = false;
     if (params.get('castla_phone_html') === '1') {
+        window.CASTLA_PHONE_HTML_READY = true;
         window.dispatchEvent(new Event('castla:phone-html-ready'));
         return;
     }
