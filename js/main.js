@@ -105,7 +105,7 @@ function showAutoTierToast(message) {
     _autoTierToastTimer = setTimeout(() => { el.style.opacity = '0'; }, 4500);
 }
 
-document.addEventListener('DOMContentLoaded', async () => {
+const initializeLauncher = async () => {
     console.log('[Main] DOM Loaded, initializing components...');
 
     const webLauncher = document.getElementById('web-launcher');
@@ -2140,4 +2140,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     updateOverlayControlsVisibility();
     updateSplitToolbarVisibility();
-});
+};
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeLauncher, { once: true });
+} else {
+    initializeLauncher();
+}
