@@ -6,15 +6,32 @@
 var PROXY_SIGNAL_URL = 'wss://eelqunk48d.execute-api.ap-northeast-2.amazonaws.com/prod';
 (function () {
     const params = new URLSearchParams(location.search);
-    const room = params.get('r');
+    const ROOM_PATTERN = /^[abcdefghjkmnpqrstuvwxyz23456789]{12}$/;
+    const ROOM_KEY = 'castlaRoom';
+    const onPublicSite = location.hostname.endsWith('gash.clop.ai');
+    // Storage can be missing or blocked; the page then simply needs ?r= every time.
+    const rememberRoom = (code) => { try { localStorage.setItem(ROOM_KEY, code); } catch (_) {} };
+    let room = params.get('r');
+    // A car that connected before may open the bare address: put its room code back into the
+    // address, where the rest of the page (and the phone's own HTML) looks for it.
+    if (!room && onPublicSite && !params.has('h')) {
+        let saved = null;
+        try { saved = localStorage.getItem(ROOM_KEY); } catch (_) {}
+        if (saved && ROOM_PATTERN.test(saved)) {
+            room = saved;
+            params.set('r', saved);
+            history.replaceState(null, '', location.pathname + '?' + params.toString() + location.hash);
+        }
+    }
     window.CASTLA_HTTP_BOOTSTRAP = false;
     if (params.get('castla_phone_html') === '1') {
+        if (room && ROOM_PATTERN.test(room) && onPublicSite) rememberRoom(room);
         window.CASTLA_PHONE_HTML_READY = true;
         window.dispatchEvent(new Event('castla:phone-html-ready'));
         return;
     }
-    if (!room || !/^[abcdefghjkmnpqrstuvwxyz23456789]{12}$/.test(room)) return;
-    if (!location.hostname.endsWith('gash.clop.ai')) return;
+    if (!room || !ROOM_PATTERN.test(room)) return;
+    if (!onPublicSite) return;
     window.CASTLA_HTTP_BOOTSTRAP = true;
 
     const self = 'car-boot-' + Math.random().toString(36).slice(2, 10);
@@ -127,6 +144,7 @@ var PROXY_SIGNAL_URL = 'wss://eelqunk48d.execute-api.ap-northeast-2.amazonaws.co
                 throw new Error('Invalid phone page response');
             }
             finished = true;
+            rememberRoom(room);     // only a code that reached the phone is worth keeping
             const next = new URL(location.href);
             next.searchParams.set('castla_phone_html', '1');
             history.replaceState(null, '', next.pathname + next.search + next.hash);
