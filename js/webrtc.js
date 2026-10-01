@@ -102,6 +102,8 @@ class RtcLink {
         this.hellos = 0;
         this.helloTimer = null;
         this.waiters = [];
+        this.httpWaiters = new Map();
+        this.phoneId = null;
         this.icons = new Map();
         this.partial = new Map();
         this.relay = null;
@@ -213,8 +215,18 @@ class RtcLink {
 
         let msg;
         try { msg = JSON.parse(parts.join('')); } catch (_) { return; }
+        if (msg.type === 'http_response') {
+            if (msg.to !== this.self) return;
+            const waiter = this.httpWaiters.get(msg.requestId);
+            if (!waiter) return;
+            clearTimeout(waiter.timer);
+            this.httpWaiters.delete(msg.requestId);
+            waiter.resolve(msg);
+            return;
+        }
         if (msg.type !== 'offer' || this.connected || this.paused) return;
         if (msg.to && msg.to !== this.self) return;   // another screen's offer
+        this.phoneId = part.from;
         // Don't say hello again while this offer is being answered; the phone would take it as
         // a request to start over. If negotiation stalls, the next hello asks for a fresh offer.
         this.scheduleHello(RTC_NEGOTIATION_MS);
@@ -304,6 +316,24 @@ class RtcLink {
                 if (at >= 0) { this.waiters.splice(at, 1); reject(new Error('RTC request timed out')); }
             }, RTC_REQUEST_TIMEOUT_MS);
             socket.send(JSON.stringify(message));
+        });
+    }
+
+    /** HTTP GET through the AWS room relay, phone, and its 10.200.0.1 TUN endpoint. */
+    httpGet(path) {
+        if (!this.phoneId) return Promise.reject(new Error('Phone endpoint is not connected'));
+        if (typeof path !== 'string' || !path.startsWith('/') || path.length > 2048 || path.includes('..')) {
+            return Promise.reject(new Error('Invalid proxy path'));
+        }
+        const requestId = Math.random().toString(36).slice(2, 12);
+        return new Promise((resolve, reject) => {
+            const waiter = { resolve, reject, timer: null };
+            waiter.timer = setTimeout(() => {
+                this.httpWaiters.delete(requestId);
+                reject(new Error('Phone HTTP tunnel timed out'));
+            }, RTC_REQUEST_TIMEOUT_MS);
+            this.httpWaiters.set(requestId, waiter);
+            this.publish({ type: 'http_request', method: 'GET', path, requestId, to: this.phoneId });
         });
     }
 

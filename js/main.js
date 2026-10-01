@@ -1413,10 +1413,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         return response.json();
     }
 
-    // The browser blocks this page's HTTP requests to the phone, so over WebRTC the launcher
-    // list and icons come through the control channel instead.
-    function requestAppsOverRtc() {
-        return rtcLink.request(controlSocket, { type: 'getApps' }, (m) => (m.type === 'apps' ? m.data : undefined));
+    // HTTPS cannot fetch a private phone address. AWS relays the request to the phone's TUN proxy.
+    async function requestAppsOverRtc() {
+        const response = await rtcLink.httpGet('/api/apps');
+        if (response.status < 200 || response.status >= 300) throw new Error(`Phone HTTP ${response.status}`);
+        const bytes = Uint8Array.from(atob(response.bodyBase64 || ''), (c) => c.charCodeAt(0));
+        return JSON.parse(new TextDecoder().decode(bytes));
     }
 
     function setAppIcon(img, pkg) {
@@ -1424,7 +1426,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             img.src = `${apiBase}/api/icon?pkg=${encodeURIComponent(pkg)}`;
             return;
         }
-        rtcLink.icon(controlSocket, pkg).then((url) => { if (url) img.src = url; });
+        rtcLink.httpGet(`/api/icon?pkg=${encodeURIComponent(pkg)}`).then((response) => {
+            if (response.status >= 200 && response.status < 300 && response.bodyBase64) {
+                img.src = `data:${response.contentType || 'image/png'};base64,${response.bodyBase64}`;
+            }
+        }).catch((err) => console.warn('[Launcher] Icon proxy failed:', err));
     }
 
     async function loadLauncherApps() {
