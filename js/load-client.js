@@ -9,7 +9,7 @@
         const next = () => {
             if (index >= scripts.length) return;
             const script = document.createElement('script');
-            script.src = `js/${scripts[index++]}?v=ott-iframe-20261002b`;
+            script.src = `js/${scripts[index++]}?v=ott-iframe-20261002`;
             script.onload = next;
             script.onerror = () => console.error('[Castla] Failed to load', script.src);
             document.body.appendChild(script);
