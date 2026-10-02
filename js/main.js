@@ -25,7 +25,11 @@ function resolveHost(loc) {
 }
 
 const host = resolveHost(window.location);
-const apiBase = `http://${host}`;
+// Served over https (the phone's TLS listener) the page must use wss/https — a secure page
+// may not open ws:// or http:// connections (mixed content). Served over plain http, both
+// stay plain and EME simply stays unavailable to the OTT iframe.
+const wsScheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
+const apiBase = `${window.location.protocol}//${host}`;
 
 // `?r=<room code>` selects the WebRTC transport (see webrtc.js); without it the page talks to
 // the phone over WebSockets as before.
@@ -443,7 +447,7 @@ const initializeLauncher = async () => {
         if (secondaryVideoSocket) {
             try { secondaryVideoSocket.close(); } catch (_) {}
         }
-        const wsUrl = `ws://${host}/ws/video?channel=secondary`;
+        const wsUrl = `${wsScheme}://${host}/ws/video?channel=secondary`;
         secondaryVideoSocket = new WebSocket(wsUrl);
         secondaryVideoSocket.binaryType = 'arraybuffer';
         secondaryVideoSocket.onmessage = async (event) => {
@@ -470,6 +474,31 @@ const initializeLauncher = async () => {
         };
         if (app.componentName) message.componentName = app.componentName;
         controlSocket.send(JSON.stringify(message));
+    }
+
+    /**
+     * Open the iframe pane without touching the phone: the browser plays the OTT site itself.
+     * Only meaningful in a secure context — EME (Widevine) needs one, which is why the public
+     * launcher is https and the phone also serves TLS on 9443. Over plain http the caller
+     * falls back to launching the phone's browser and mirroring it.
+     */
+    function openOttInBrowserPane(app) {
+        const url = getPresetUrlForApp(app);
+        if (!url) return false;
+        if (browserSplitState.active) disableBrowserSplit();
+        if (isLauncherMode) {
+            isLauncherMode = false;
+            webLauncher.classList.add('hidden');
+            splitDrawer.style.display = 'none';
+            splitDrawer.classList.remove('open');
+            homeBtn.style.display = 'block';
+            hideOverlay();
+        }
+        currentPrimaryApp = app;
+        browserSplitState.fitMode = 'contain';
+        loadBrowserUrl(url);
+        sendViewportSize(true);
+        return true;
     }
 
     async function enableBrowserSplit(app) {
@@ -884,6 +913,18 @@ const initializeLauncher = async () => {
 
     function loadBrowserUrl(url) {
         if (!url) return;
+        // Presets must work straight from the launcher grid too: bring the pane up first.
+        if (!browserSplitState.active) {
+            browserSplitState.active = true;
+            browserSplitState.app = null;
+            streamPolicy.layoutMode = 'browser_only_split';
+            document.body.dataset.layoutMode = streamPolicy.layoutMode;
+            playerShell?.classList.add('browser-split');
+            updateSplitToolbarVisibility();
+            setBrowserSplitRatio(browserSplitState.ratio || DEFAULT_BROWSER_SPLIT_RATIO);
+            applyActiveFitModes();
+            requestAnimationFrame(() => sendViewportSize());
+        }
         browserSplitState.url = url;
         if (browserHomeState) browserHomeState.classList.add('hidden');
         if (browserError) browserError.classList.remove('visible');
@@ -1027,7 +1068,7 @@ const initializeLauncher = async () => {
     }
 
     function connectVideo() {
-        const wsUrl = `ws://${host}/ws/video`;
+        const wsUrl = `${wsScheme}://${host}/ws/video`;
         if (!isLauncherMode) setStatus('Connecting...', '');
 
         clearFrameWatchdog();
@@ -1253,7 +1294,7 @@ const initializeLauncher = async () => {
             if (SPLIT_STRATEGY === 'dual_stream' && browserSplitState.active && (!secondaryVideoSocket || secondaryVideoSocket.readyState === WebSocket.CLOSED)) connectSecondaryVideo();
             if (controlSocket && controlSocket.readyState === WebSocket.CLOSED) connectControl();
             if (audioPlayer && (!audioPlayer.socket || audioPlayer.socket.readyState === WebSocket.CLOSED)) {
-                audioPlayer.startFromUserGesture(`ws://${host}/ws/audio`);
+                audioPlayer.startFromUserGesture(`${wsScheme}://${host}/ws/audio`);
             }
         }, 3000);
     }
@@ -1323,7 +1364,7 @@ const initializeLauncher = async () => {
     }
 
     function connectControl() {
-        const wsUrl = `ws://${host}/ws/control`;
+        const wsUrl = `${wsScheme}://${host}/ws/control`;
         controlSocket = new WebSocket(wsUrl);
         attachControlHandlers();
     }
@@ -1764,6 +1805,14 @@ const initializeLauncher = async () => {
         const componentName = app.componentName || null;
         console.log(`[Launcher] Launching app: ${pkgName} (split=${isSplit})`);
 
+        // OTT apps with a web counterpart play in this page's own iframe when the page is a
+        // secure context (public https launcher, or the phone's TLS listener): the browser
+        // gets EME and decrypts DRM itself, so no phone app launch and no mirrored black screen.
+        if (!isSplit && window.isSecureContext && getPresetUrlForApp(app)) {
+            openOttInBrowserPane(app);
+            return;
+        }
+
         if (isSplit) {
             if (isLauncherMode) {
                 showLauncherNotice('먼저 왼쪽에 실행할 앱을 선택하세요.');
@@ -2047,7 +2096,7 @@ const initializeLauncher = async () => {
         if (rtcRoom) {
             if (!audioPlayer.audioCtx) await audioPlayer.startFromUserGesture(rtcAudioSocket);
         } else if (!audioPlayer.socket || audioPlayer.socket.readyState === WebSocket.CLOSED) {
-            await audioPlayer.startFromUserGesture(`ws://${host}/ws/audio`);
+            await audioPlayer.startFromUserGesture(`${wsScheme}://${host}/ws/audio`);
         }
         document.removeEventListener('click', dismissSplash);
         document.removeEventListener('touchstart', dismissSplash);
