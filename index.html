@@ -520,6 +520,11 @@
         #player-shell.browser-split #display-secondary {
             display: block;
         }
+        /* Browser-only split: no mirrored app in the pane — the canvas would push the
+           iframe UI below the pane, leaving the pane empty. */
+        body[data-layout-mode="browser_only_split"] #player-shell.browser-split #display-secondary {
+            display: none;
+        }
 
         /* ── Browser-Only Split Pane ── */
         .browser-pane-ui {
@@ -892,6 +897,6 @@
 
     </div>
 
-    <script src="js/load-client.js?v=ott-iframe-20261002"></script>
+    <script src="js/load-client.js?v=ott-iframe-20261002b"></script>
 </body>
 </html>
